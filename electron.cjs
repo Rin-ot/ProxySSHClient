@@ -4,19 +4,50 @@ const path = require('path');
 
 let mainWindow;
 let serverProcess;
+let hasLoaded = false;
+
+function loadAppUrl() {
+  if (hasLoaded || !mainWindow) return;
+  hasLoaded = true;
+  mainWindow.loadURL('http://localhost:5000')
+    .then(() => {
+      mainWindow.show();
+    })
+    .catch((err) => {
+      console.warn('[Electron Main] Direct URL load failed, falling back to polling:', err.message);
+      hasLoaded = false;
+      function pollApp() {
+        if (hasLoaded || !mainWindow) return;
+        mainWindow.loadURL('http://localhost:5000')
+          .then(() => {
+            hasLoaded = true;
+            mainWindow.show();
+          })
+          .catch(() => {
+            setTimeout(pollApp, 100);
+          });
+      }
+      pollApp();
+    });
+}
 
 function startBackendServer() {
   const serverPath = path.join(__dirname, 'server.js');
   
   // Fork the Express backend as a separate Node process.
-  // Because the root package.json defines "type": "module",
-  // Node will run server.js as an ES Module.
   serverProcess = fork(serverPath, [], {
     env: { 
       ...process.env, 
       PORT: '5000' 
     },
-    silent: false // Keeps server console logs visible in development
+    silent: false
+  });
+
+  serverProcess.on('message', (msg) => {
+    if (msg && msg.type === 'ready') {
+      console.log('[Electron Main] Backend server reported ready via IPC. Loading URL.');
+      loadAppUrl();
+    }
   });
 
   serverProcess.on('error', (err) => {
@@ -43,22 +74,15 @@ function createWindow() {
     }
   });
 
-  // Hides standard desktop menu bar for a premium app appearance (Alt key toggles it)
   mainWindow.setAutoHideMenuBar(true);
 
-  // Poll loop: wait for backend server to boot up before showing window
-  function loadApp() {
-    mainWindow.loadURL('http://localhost:5000')
-      .then(() => {
-        mainWindow.show();
-      })
-      .catch(() => {
-        // Wait 150ms and retry if connection fails (port 5000 not listening yet)
-        setTimeout(loadApp, 150);
-      });
-  }
-
-  loadApp();
+  // Safety fallback: if IPC ready message isn't received within 1500ms, force loading anyway
+  setTimeout(() => {
+    if (!hasLoaded) {
+      console.log('[Electron Main] IPC ready timeout reached. Forcing load URL.');
+      loadAppUrl();
+    }
+  }, 1500);
 
   mainWindow.on('closed', () => {
     mainWindow = null;

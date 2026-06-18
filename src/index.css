@@ -896,3 +896,46 @@ select.form-input {
   background: var(--success);
   box-shadow: 0 0 8px var(--success-glow);
 }
+
+/* Sidebar transition and collapse styles */
+.sidebar {
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), width 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+.sidebar.collapsed {
+  width: 0 !important;
+  transform: translateX(-100%) !important;
+  opacity: 0 !important;
+  border-right: none !important;
+  overflow: hidden !important;
+  pointer-events: none !important;
+}
+
+/* Sidebar Toggle Button styling */
+.sidebar-toggle-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 8px;
+  border-radius: var(--border-radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: var(--transition-fast);
+  margin-right: 8px;
+  border: 1px solid var(--panel-border);
+  flex-shrink: 0;
+}
+
+.sidebar-toggle-btn:hover {
+  color: var(--text-primary);
+  background: hsla(0, 0%, 100%, 0.08);
+  border-color: hsla(0, 0%, 100%, 0.15);
+}
+
+/* Direct Connect Button hover styling */
+.action-btn.connect-action-btn:hover {
+  color: var(--success) !important;
+  background: var(--success-glow) !important;
+}

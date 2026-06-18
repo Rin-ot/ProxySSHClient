@@ -70,6 +70,20 @@ const ChevronUpIcon = () => (
   </svg>
 );
 
+const SidebarToggleIcon = ({ isOpen }) => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ transition: 'transform 0.3s ease', transform: isOpen ? 'rotate(0deg)' : 'rotate(180deg)' }}>
+    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+    <line x1="9" y1="3" x2="9" y2="21"></line>
+    <path d="M14 9l-3 3 3 3"></path>
+  </svg>
+);
+
+const ConnectIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <polygon points="5 3 19 12 5 21 5 3"></polygon>
+  </svg>
+);
+
 const AppTemplate = {
   id: '',
   name: '',
@@ -99,6 +113,7 @@ export default function App() {
   const [proxyPanelOpen, setProxyPanelOpen] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [connecting, setConnecting] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
 
   // Custom non-blocking Toast & Modal states to bypass Electron focus bugs on Windows
   const [toast, setToast] = useState(null);
@@ -302,27 +317,16 @@ export default function App() {
     reader.readAsText(file);
   };
 
-  const handleConnect = async (e) => {
-    e.preventDefault();
-    setErrorMessage('');
-    
-    if (!editingProfile.ssh.host || !editingProfile.ssh.username) {
-      setErrorMessage('SSH Host and Username are required.');
-      return;
-    }
-
-    setConnecting(true);
-
+  const initiateSshConnection = async (sshConfig, proxyConfig, aliasName) => {
     try {
-      // POST connection settings to server
       const response = await fetch('/api/sessions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          ssh: editingProfile.ssh,
-          proxy: editingProfile.proxy
+          ssh: sshConfig,
+          proxy: proxyConfig
         }),
       });
 
@@ -334,25 +338,47 @@ export default function App() {
       const { sessionId } = await response.json();
 
       // Create new terminal tab
-      const tabTitle = editingProfile.name || `${editingProfile.ssh.username}@${editingProfile.ssh.host}`;
+      const tabTitle = aliasName || `${sshConfig.username}@${sshConfig.host}`;
       const newTab = {
         id: `terminal-${sessionId}`,
         title: tabTitle,
         sessionId: sessionId,
-        profileId: editingProfile.id || null,
+        profileId: editingProfile ? editingProfile.id : null,
         connectionConfig: {
-          ssh: JSON.parse(JSON.stringify(editingProfile.ssh)),
-          proxy: JSON.parse(JSON.stringify(editingProfile.proxy))
+          ssh: JSON.parse(JSON.stringify(sshConfig)),
+          proxy: JSON.parse(JSON.stringify(proxyConfig))
         }
       };
 
       setActiveTerminals(prev => [...prev, newTab]);
       setActiveTabId(`terminal-${sessionId}`);
+      
+      // Auto-collapse sidebar upon successful connection to maximize screen space
+      setSidebarOpen(false);
     } catch (err) {
-      setErrorMessage(err.message || 'Server error. Is the backend running?');
-    } finally {
-      setConnecting(false);
+      showToast(err.message || 'Server error. Is the backend running?', 'error');
+      setErrorMessage(err.message || 'Server error.');
     }
+  };
+
+  const handleConnect = async (e) => {
+    e.preventDefault();
+    setErrorMessage('');
+    
+    if (!editingProfile.ssh.host || !editingProfile.ssh.username) {
+      setErrorMessage('SSH Host and Username are required.');
+      return;
+    }
+
+    setConnecting(true);
+    await initiateSshConnection(editingProfile.ssh, editingProfile.proxy, editingProfile.name);
+    setConnecting(false);
+  };
+
+  const handleDirectConnect = async (profile, e) => {
+    e.stopPropagation();
+    showToast(`Connecting to ${profile.name || profile.ssh.host}...`, 'info');
+    await initiateSshConnection(profile.ssh, profile.proxy, profile.name);
   };
 
   const handleCloseTerminal = (tabId) => {
@@ -431,7 +457,7 @@ export default function App() {
   return (
     <div className="app-container">
       {/* 1. Sidebar Panel */}
-      <aside className="sidebar">
+      <aside className={`sidebar ${sidebarOpen ? '' : 'collapsed'}`}>
         <div className="sidebar-header">
           <div className="logo-section">
             <div className="logo-icon">⚡</div>
@@ -478,6 +504,9 @@ export default function App() {
                       </div>
                     </div>
                     <div className="profile-actions">
+                      <button className="action-btn connect-action-btn" title="Connect Directly" onClick={(e) => handleDirectConnect(p, e)}>
+                        <ConnectIcon />
+                      </button>
                       <button className="action-btn" title="Edit" onClick={(e) => handleEditProfile(p, e)}>
                         <EditIcon />
                       </button>
@@ -561,6 +590,15 @@ export default function App() {
       <main className="main-content">
         {/* Tab Bar (Shows connection manager + active terminals) */}
         <div className="tab-bar">
+          <button 
+            type="button"
+            className="sidebar-toggle-btn" 
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            title={sidebarOpen ? "Collapse Sidebar" : "Expand Sidebar"}
+            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          >
+            <SidebarToggleIcon isOpen={sidebarOpen} />
+          </button>
           <div 
             className={`tab-item ${(activeTabId === 'welcome' || activeTabId === 'form') ? 'active' : ''}`}
             onClick={() => {

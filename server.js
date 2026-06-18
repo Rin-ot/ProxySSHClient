@@ -309,4 +309,7 @@ server.on('upgrade', (request, socket, head) => {
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
   console.log(`[ProxySSH Server] Running on http://localhost:${PORT}`);
+  if (process.send) {
+    process.send({ type: 'ready' });
+  }
 });
