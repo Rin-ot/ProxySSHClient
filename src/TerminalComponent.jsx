@@ -3,7 +3,7 @@ import { Terminal } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import 'xterm/css/xterm.css';
 
-export default function TerminalComponent({ sessionId, title, onDisconnect }) {
+export default function TerminalComponent({ sessionId, title, onDisconnect, onReconnect }) {
   const terminalRef = useRef(null);
   const xtermRef = useRef(null);
   const fitAddonRef = useRef(null);
@@ -180,7 +180,9 @@ export default function TerminalComponent({ sessionId, title, onDisconnect }) {
   }, [status]);
 
   const handleReconnect = () => {
-    window.location.reload();
+    if (onReconnect) {
+      onReconnect();
+    }
   };
 
   const handleTerminalClick = () => {
@@ -204,7 +206,7 @@ export default function TerminalComponent({ sessionId, title, onDisconnect }) {
               <h3>Connection Failed</h3>
               <p>{statusMessage}</p>
               <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
-                <button className="btn-reconnect" onClick={handleReconnect}>Reload Page</button>
+                <button className="btn-reconnect" onClick={handleReconnect}>Reconnect</button>
                 <button className="btn-secondary" style={{ padding: '8px 16px', fontSize: '13px' }} onClick={onDisconnect}>Close Tab</button>
               </div>
             </div>

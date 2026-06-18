@@ -231,7 +231,11 @@ export default function App() {
         id: `terminal-${sessionId}`,
         title: tabTitle,
         sessionId: sessionId,
-        profileId: editingProfile.id || null
+        profileId: editingProfile.id || null,
+        connectionConfig: {
+          ssh: JSON.parse(JSON.stringify(editingProfile.ssh)),
+          proxy: JSON.parse(JSON.stringify(editingProfile.proxy))
+        }
       };
 
       setActiveTerminals(prev => [...prev, newTab]);
@@ -255,6 +259,49 @@ export default function App() {
         // Fallback to welcome screen
         setActiveTabId('welcome');
       }
+    }
+  };
+
+  const handleReconnectTab = async (tabId) => {
+    const tabIndex = activeTerminals.findIndex(t => t.id === tabId);
+    if (tabIndex === -1) return;
+    
+    const tab = activeTerminals[tabIndex];
+    
+    try {
+      const response = await fetch('/api/sessions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          ssh: tab.connectionConfig.ssh,
+          proxy: tab.connectionConfig.proxy
+        }),
+      });
+
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || 'Failed to initialize session.');
+      }
+
+      const { sessionId } = await response.json();
+      
+      const updated = activeTerminals.map(t => {
+        if (t.id === tabId) {
+          return {
+            ...t,
+            id: `terminal-${sessionId}`,
+            sessionId: sessionId
+          };
+        }
+        return t;
+      });
+      
+      setActiveTerminals(updated);
+      setActiveTabId(`terminal-${sessionId}`);
+    } catch (err) {
+      alert(`Reconnection failed: ${err.message}`);
     }
   };
 
@@ -708,6 +755,7 @@ export default function App() {
                   sessionId={tab.sessionId} 
                   title={tab.title}
                   onDisconnect={() => handleCloseTerminal(tab.id)} 
+                  onReconnect={() => handleReconnectTab(tab.id)}
                 />
               </div>
             );
