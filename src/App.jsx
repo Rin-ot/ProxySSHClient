@@ -100,6 +100,34 @@ export default function App() {
   const [errorMessage, setErrorMessage] = useState('');
   const [connecting, setConnecting] = useState(false);
 
+  // Custom non-blocking Toast & Modal states to bypass Electron focus bugs on Windows
+  const [toast, setToast] = useState(null);
+  const [modal, setModal] = useState(null);
+
+  const showToast = (message, type = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => {
+      setToast(prev => prev && prev.message === message ? null : prev);
+    }, 3000);
+  };
+
+  const showConfirm = (title, message) => {
+    return new Promise((resolve) => {
+      setModal({
+        title,
+        message,
+        showCancel: true,
+        onConfirm: () => {
+          setModal(null);
+          resolve(true);
+        },
+        onCancel: () => {
+          setModal(null);
+          resolve(false);
+        }
+      });
+    });
+  };
   // Load profiles from LocalStorage on mount
   useEffect(() => {
     const saved = localStorage.getItem('proxy_ssh_profiles');
@@ -140,9 +168,10 @@ export default function App() {
     setProxyPanelOpen(profile.proxy.type !== 'none');
   };
 
-  const handleDeleteProfile = (id, e) => {
+  const handleDeleteProfile = async (id, e) => {
     e.stopPropagation();
-    if (confirm('Are you sure you want to delete this profile?')) {
+    const confirmed = await showConfirm('Delete Profile', 'Are you sure you want to delete this profile?');
+    if (confirmed) {
       const updated = profiles.filter(p => p.id !== id);
       saveProfilesToStorage(updated);
       if (editingProfile && editingProfile.id === id) {
@@ -173,8 +202,9 @@ export default function App() {
     }
     saveProfilesToStorage(updated);
     setErrorMessage('');
-    alert('Profile saved successfully!');
+    showToast('Profile saved successfully!', 'success');
   };
+
 
   // Read private key file contents
   const handleKeyFileUpload = (e) => {
@@ -301,7 +331,7 @@ export default function App() {
       setActiveTerminals(updated);
       setActiveTabId(`terminal-${sessionId}`);
     } catch (err) {
-      alert(`Reconnection failed: ${err.message}`);
+      showToast(`Reconnection failed: ${err.message}`, 'error');
     }
   };
 
@@ -754,6 +784,7 @@ export default function App() {
                 <TerminalComponent 
                   sessionId={tab.sessionId} 
                   title={tab.title}
+                  isActive={isTabActive}
                   onDisconnect={() => handleCloseTerminal(tab.id)} 
                   onReconnect={() => handleReconnectTab(tab.id)}
                 />
@@ -762,6 +793,34 @@ export default function App() {
           })}
         </div>
       </main>
+
+      {/* Custom Toast System */}
+      {toast && (
+        <div className={`custom-toast toast-${toast.type}`}>
+          <span style={{ fontSize: '16px' }}>{toast.type === 'success' ? '✓' : '✗'}</span>
+          <span>{toast.message}</span>
+        </div>
+      )}
+
+      {/* Custom Modal Confirmation Dialog */}
+      {modal && (
+        <div className="custom-modal-overlay">
+          <div className="custom-modal">
+            <h3 className="custom-modal-title">{modal.title}</h3>
+            <p className="custom-modal-body">{modal.message}</p>
+            <div className="custom-modal-actions">
+              {modal.showCancel && (
+                <button className="btn-secondary" style={{ padding: '8px 16px', fontSize: '13px' }} onClick={modal.onCancel}>
+                  Cancel
+                </button>
+              )}
+              <button className="btn-primary" style={{ padding: '8px 20px', fontSize: '13px' }} onClick={modal.onConfirm}>
+                Confirm
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

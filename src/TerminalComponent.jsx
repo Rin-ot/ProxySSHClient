@@ -3,7 +3,7 @@ import { Terminal } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import 'xterm/css/xterm.css';
 
-export default function TerminalComponent({ sessionId, title, onDisconnect, onReconnect }) {
+export default function TerminalComponent({ sessionId, title, isActive, onDisconnect, onReconnect }) {
   const terminalRef = useRef(null);
   const xtermRef = useRef(null);
   const fitAddonRef = useRef(null);
@@ -168,6 +168,22 @@ export default function TerminalComponent({ sessionId, title, onDisconnect, onRe
       term.dispose();
     };
   }, [sessionId]);
+
+  // Auto-focus terminal when tab becomes active, blur when deactivated to prevent key event hijacking
+  useEffect(() => {
+    if (xtermRef.current) {
+      if (isActive) {
+        const timer = setTimeout(() => {
+          if (xtermRef.current) {
+            xtermRef.current.focus();
+          }
+        }, 100);
+        return () => clearTimeout(timer);
+      } else {
+        xtermRef.current.blur();
+      }
+    }
+  }, [isActive]);
 
   // Ensure terminal receives focus when state changes to 'ready' (after DOM has completed rendering)
   useEffect(() => {
