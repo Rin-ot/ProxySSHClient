@@ -2,6 +2,9 @@
 
 プロキシ環境下（HTTP CONNECT / SOCKS4 / SOCKS5）でも動作する、ポータブルなデスクトップ向けSSHクライアントです。
 
+# ダウンロード
+[Release](https://github.com/Rin-ot/ProxySSHClient/releases/latest) からダウンロードしてください。
+
 ## 特徴
 
 * **各種プロキシ対応**: HTTP CONNECT トンネルのほか、SOCKS4 / SOCKS5 プロキシに対応。

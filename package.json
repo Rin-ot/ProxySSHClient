@@ -1,7 +1,7 @@
 {
   "name": "proxysshclient",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.1",
   "type": "module",
   "main": "electron.cjs",
   "scripts": {
@@ -38,9 +38,9 @@
     "vite": "^8.0.12"
   },
   "build": {
-    "appId": "com.proxyssh.client",
+    "appId": "jp.r7x.proxyssh.client",
     "productName": "ProxySSHClient",
-    "copyright": "Copyright © 2026",
+    "copyright": "Rin7rx © 2026",
     "directories": {
       "output": "dist-desktop-build"
     },
