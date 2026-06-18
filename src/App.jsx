@@ -128,6 +128,84 @@ export default function App() {
       });
     });
   };
+  // Drag and Drop states for saved profiles and active terminal tabs
+  const [draggedProfileIndex, setDraggedProfileIndex] = useState(null);
+  const [dragOverProfileIndex, setDragOverProfileIndex] = useState(null);
+  const [draggedTabIndex, setDraggedTabIndex] = useState(null);
+  const [dragOverTabIndex, setDragOverTabIndex] = useState(null);
+
+  const handleProfileDragStart = (e, index) => {
+    setDraggedProfileIndex(index);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleProfileDragOver = (e, index) => {
+    e.preventDefault();
+  };
+
+  const handleProfileDrop = (e, targetIndex) => {
+    e.preventDefault();
+    if (draggedProfileIndex === null || draggedProfileIndex === targetIndex) return;
+
+    const updated = [...profiles];
+    const [removed] = updated.splice(draggedProfileIndex, 1);
+    updated.splice(targetIndex, 0, removed);
+    saveProfilesToStorage(updated);
+    
+    setDraggedProfileIndex(null);
+    setDragOverProfileIndex(null);
+  };
+
+  const handleProfileDragEnd = () => {
+    setDraggedProfileIndex(null);
+    setDragOverProfileIndex(null);
+  };
+
+  const handleTabDragStart = (e, index) => {
+    setDraggedTabIndex(index);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleTabDragOver = (e, index) => {
+    e.preventDefault();
+  };
+
+  const handleTabDrop = (e, targetIndex) => {
+    e.preventDefault();
+    if (draggedTabIndex === null || draggedTabIndex === targetIndex) return;
+
+    const updated = [...activeTerminals];
+    const [removed] = updated.splice(draggedTabIndex, 1);
+    updated.splice(targetIndex, 0, removed);
+    setActiveTerminals(updated);
+    
+    setDraggedTabIndex(null);
+    setDragOverTabIndex(null);
+  };
+
+  const handleTabDragEnd = () => {
+    setDraggedTabIndex(null);
+    setDragOverTabIndex(null);
+  };
+
+  const moveTabUp = (index) => {
+    if (index === 0) return;
+    const updated = [...activeTerminals];
+    const temp = updated[index];
+    updated[index] = updated[index - 1];
+    updated[index - 1] = temp;
+    setActiveTerminals(updated);
+  };
+
+  const moveTabDown = (index) => {
+    if (index === activeTerminals.length - 1) return;
+    const updated = [...activeTerminals];
+    const temp = updated[index];
+    updated[index] = updated[index + 1];
+    updated[index + 1] = temp;
+    setActiveTerminals(updated);
+  };
+
   // Load profiles from LocalStorage on mount
   useEffect(() => {
     const saved = localStorage.getItem('proxy_ssh_profiles');
@@ -369,14 +447,22 @@ export default function App() {
                 No saved profiles yet. Click "+ New Profile" below to start.
               </div>
             ) : (
-              profiles.map(p => {
+              profiles.map((p, index) => {
                 const isActive = editingProfile && editingProfile.id === p.id && activeTabId === 'form';
                 const hasProxy = p.proxy && p.proxy.type !== 'none';
                 return (
                   <div 
                     key={p.id} 
-                    className={`profile-item ${isActive ? 'active' : ''}`}
+                    className={`profile-item ${isActive ? 'active' : ''} ${dragOverProfileIndex === index ? 'drag-over' : ''}`}
                     onClick={() => handleSelectProfileToConnect(p)}
+                    draggable
+                    onDragStart={(e) => handleProfileDragStart(e, index)}
+                    onDragOver={(e) => handleProfileDragOver(e, index)}
+                    onDrop={(e) => handleProfileDrop(e, index)}
+                    onDragEnd={handleProfileDragEnd}
+                    onDragEnter={() => setDragOverProfileIndex(index)}
+                    onDragLeave={() => setDragOverProfileIndex(null)}
+                    style={{ opacity: draggedProfileIndex === index ? 0.4 : 1 }}
                   >
                     <div className="profile-info">
                       <div className="profile-name">{p.name}</div>
@@ -404,6 +490,63 @@ export default function App() {
               })
             )}
           </div>
+
+          {activeTerminals.length > 0 && (
+            <>
+              <div className="section-label" style={{ marginTop: '24px' }}>Active Sessions</div>
+              <div className="profile-list">
+                {activeTerminals.map((tab, index) => {
+                  const isActive = activeTabId === tab.id;
+                  return (
+                    <div 
+                      key={tab.id} 
+                      className={`profile-item ${isActive ? 'active' : ''} ${dragOverTabIndex === index ? 'drag-over' : ''}`}
+                      onClick={() => setActiveTabId(tab.id)}
+                      draggable
+                      onDragStart={(e) => handleTabDragStart(e, index)}
+                      onDragOver={(e) => handleTabDragOver(e, index)}
+                      onDrop={(e) => handleTabDrop(e, index)}
+                      onDragEnd={handleTabDragEnd}
+                      onDragEnter={() => setDragOverTabIndex(index)}
+                      onDragLeave={() => setDragOverTabIndex(null)}
+                      style={{ opacity: draggedTabIndex === index ? 0.4 : 1 }}
+                    >
+                      <div className="profile-info">
+                        <div className="profile-name">{tab.title}</div>
+                        <div className="profile-meta" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span className="status-indicator-dot online"></span>
+                          <span>Active Session</span>
+                        </div>
+                      </div>
+                      <div className="profile-actions" style={{ display: 'flex', gap: '4px' }}>
+                        <button 
+                          className="action-btn" 
+                          title="Move Up" 
+                          onClick={(e) => { e.stopPropagation(); moveTabUp(index); }}
+                          disabled={index === 0}
+                          style={{ opacity: index === 0 ? 0.3 : 1 }}
+                        >
+                          ▲
+                        </button>
+                        <button 
+                          className="action-btn" 
+                          title="Move Down" 
+                          onClick={(e) => { e.stopPropagation(); moveTabDown(index); }}
+                          disabled={index === activeTerminals.length - 1}
+                          style={{ opacity: index === activeTerminals.length - 1 ? 0.3 : 1 }}
+                        >
+                          ▼
+                        </button>
+                        <button className="action-btn delete-btn" title="Close Session" onClick={(e) => { e.stopPropagation(); handleCloseTerminal(tab.id); }}>
+                          <CloseIcon />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
         </div>
 
         <div className="sidebar-footer">
@@ -432,11 +575,19 @@ export default function App() {
             <span>Connection Manager</span>
           </div>
 
-          {activeTerminals.map(tab => (
+          {activeTerminals.map((tab, index) => (
             <div 
               key={tab.id} 
-              className={`tab-item ${activeTabId === tab.id ? 'active' : ''}`}
+              className={`tab-item ${activeTabId === tab.id ? 'active' : ''} ${dragOverTabIndex === index ? 'drag-over' : ''}`}
               onClick={() => setActiveTabId(tab.id)}
+              draggable
+              onDragStart={(e) => handleTabDragStart(e, index)}
+              onDragOver={(e) => handleTabDragOver(e, index)}
+              onDrop={(e) => handleTabDrop(e, index)}
+              onDragEnd={handleTabDragEnd}
+              onDragEnter={() => setDragOverTabIndex(index)}
+              onDragLeave={() => setDragOverTabIndex(null)}
+              style={{ opacity: draggedTabIndex === index ? 0.4 : 1 }}
             >
               <TerminalIcon />
               <span>{tab.title}</span>

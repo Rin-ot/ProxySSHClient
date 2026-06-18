@@ -857,3 +857,42 @@ select.form-input {
   from { transform: scale(0.95); opacity: 0; }
   to { transform: scale(1); opacity: 1; }
 }
+
+/* Drag and Drop Reordering indicator and active session styles */
+.profile-item.drag-over {
+  border-color: var(--primary) !important;
+  background: hsla(260, 85%, 65%, 0.15) !important;
+  transform: translateY(2px);
+}
+
+.tab-item.drag-over {
+  border-color: var(--primary) !important;
+  background: hsla(260, 85%, 65%, 0.15) !important;
+}
+
+/* Cursor pointer updates for dragging */
+.profile-item[draggable="true"] {
+  cursor: grab;
+}
+.profile-item:active {
+  cursor: grabbing;
+}
+.tab-item[draggable="true"] {
+  cursor: grab;
+}
+.tab-item:active {
+  cursor: grabbing;
+}
+
+/* Online status indicator green dot */
+.status-indicator-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+.status-indicator-dot.online {
+  background: var(--success);
+  box-shadow: 0 0 8px var(--success-glow);
+}
