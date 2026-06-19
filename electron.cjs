@@ -76,6 +76,46 @@ function createWindow() {
 
   mainWindow.setAutoHideMenuBar(true);
 
+  // Intercept standard keyboard shortcuts for editing (cut, copy, paste, select all, undo, redo)
+  // because on Windows, hiding the menu bar via setAutoHideMenuBar disables these shortcuts.
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.type === 'keyDown' && (input.control || input.meta) && !input.alt) {
+      const key = input.key.toLowerCase();
+      const isShift = input.shift;
+
+      if (key === 'c') {
+        mainWindow.webContents.copy();
+        // Do not call event.preventDefault() for Ctrl+C (unless Shift is pressed)
+        // so that the event propagates to xterm.js in the renderer.
+        // Inside xterm.js custom key event handler, we will check if text is selected.
+        // If selected, xterm.js blocks it (preventing SIGINT). If not selected, xterm.js accepts it,
+        // sending standard SIGINT (\x03) to the shell.
+        if (isShift) {
+          event.preventDefault();
+        }
+      } else if (key === 'v') {
+        mainWindow.webContents.paste();
+        event.preventDefault();
+      } else if (key === 'x') {
+        mainWindow.webContents.cut();
+        event.preventDefault();
+      } else if (key === 'a') {
+        mainWindow.webContents.selectAll();
+        event.preventDefault();
+      } else if (key === 'z') {
+        if (isShift) {
+          mainWindow.webContents.redo();
+        } else {
+          mainWindow.webContents.undo();
+        }
+        event.preventDefault();
+      } else if (key === 'y') {
+        mainWindow.webContents.redo();
+        event.preventDefault();
+      }
+    }
+  });
+
   // Safety fallback: if IPC ready message isn't received within 1500ms, force loading anyway
   setTimeout(() => {
     if (!hasLoaded) {

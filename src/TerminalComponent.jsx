@@ -53,7 +53,7 @@ export default function TerminalComponent({ sessionId, title, isActive, onDiscon
     term.open(terminalRef.current);
     fitAddon.fit();
 
-    // Custom key handler to force capture of Space key
+    // Custom key handler to force capture of Space key and standard copy/paste shortcuts
     term.attachCustomKeyEventHandler((event) => {
       if (event.key === ' ' || event.keyCode === 32) {
         if (event.type === 'keydown') {
@@ -65,6 +65,46 @@ export default function TerminalComponent({ sessionId, title, isActive, onDiscon
         event.preventDefault();
         return false;
       }
+
+      // Check for Ctrl+C or Cmd+C (Copy)
+      if ((event.ctrlKey || event.metaKey) && !event.shiftKey && (event.key === 'c' || event.key === 'C')) {
+        if (term.hasSelection()) {
+          if (event.type === 'keydown') {
+            const selectedText = term.getSelection();
+            navigator.clipboard.writeText(selectedText).catch(err => {
+              console.error('Failed to copy selection:', err);
+            });
+          }
+          event.preventDefault();
+          return false;
+        }
+        // Let Ctrl+C pass through to xterm.js when no selection is present (sends SIGINT)
+        return true;
+      }
+
+      // Check for Ctrl+Shift+C or Cmd+Shift+C (Copy)
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey && (event.key === 'c' || event.key === 'C')) {
+        if (term.hasSelection()) {
+          if (event.type === 'keydown') {
+            const selectedText = term.getSelection();
+            navigator.clipboard.writeText(selectedText).catch(err => {
+              console.error('Failed to copy selection:', err);
+            });
+          }
+          event.preventDefault();
+          return false;
+        }
+      }
+
+      // Check for Ctrl+V or Cmd+V or Ctrl+Shift+V (Paste)
+      if ((event.ctrlKey || event.metaKey) && (event.key === 'v' || event.key === 'V')) {
+        // Prevent xterm.js from sending Ctrl+V character code to the shell.
+        // The main process before-input-event listener handles calling webContents.paste()
+        // which inserts the clipboard content directly into the terminal's focused helper textarea.
+        event.preventDefault();
+        return false;
+      }
+
       return true;
     });
 
