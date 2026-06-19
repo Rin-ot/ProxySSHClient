@@ -319,23 +319,35 @@ export default function App() {
 
   const initiateSshConnection = async (sshConfig, proxyConfig, aliasName) => {
     try {
-      const response = await fetch('/api/sessions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
+      let sessionId;
+      if (window.electronAPI) {
+        // Electron IPC Mode
+        const res = await window.electronAPI.createSession({
           ssh: sshConfig,
           proxy: proxyConfig
-        }),
-      });
+        });
+        sessionId = res.sessionId;
+      } else {
+        // Fallback Web API Mode (Dev server/browser mode)
+        const response = await fetch('/api/sessions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            ssh: sshConfig,
+            proxy: proxyConfig
+          }),
+        });
 
-      if (!response.ok) {
-        const errData = await response.json();
-        throw new Error(errData.error || 'Failed to initialize session.');
+        if (!response.ok) {
+          const errData = await response.json();
+          throw new Error(errData.error || 'Failed to initialize session.');
+        }
+
+        const data = await response.json();
+        sessionId = data.sessionId;
       }
-
-      const { sessionId } = await response.json();
 
       // Create new terminal tab
       const tabTitle = aliasName || `${sshConfig.username}@${sshConfig.host}`;
@@ -403,23 +415,33 @@ export default function App() {
     const tab = activeTerminals[tabIndex];
     
     try {
-      const response = await fetch('/api/sessions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
+      let sessionId;
+      if (window.electronAPI) {
+        const res = await window.electronAPI.createSession({
           ssh: tab.connectionConfig.ssh,
           proxy: tab.connectionConfig.proxy
-        }),
-      });
+        });
+        sessionId = res.sessionId;
+      } else {
+        const response = await fetch('/api/sessions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            ssh: tab.connectionConfig.ssh,
+            proxy: tab.connectionConfig.proxy
+          }),
+        });
 
-      if (!response.ok) {
-        const errData = await response.json();
-        throw new Error(errData.error || 'Failed to initialize session.');
+        if (!response.ok) {
+          const errData = await response.json();
+          throw new Error(errData.error || 'Failed to initialize session.');
+        }
+
+        const data = await response.json();
+        sessionId = data.sessionId;
       }
-
-      const { sessionId } = await response.json();
       
       const updated = activeTerminals.map(t => {
         if (t.id === tabId) {

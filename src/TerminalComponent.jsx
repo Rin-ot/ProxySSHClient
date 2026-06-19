@@ -8,6 +8,7 @@ export default function TerminalComponent({ sessionId, title, isActive, onDiscon
   const xtermRef = useRef(null);
   const fitAddonRef = useRef(null);
   const socketRef = useRef(null);
+  const ipcSessionRef = useRef(null);
   
   const [status, setStatus] = useState('connecting'); // 'connecting' | 'ready' | 'disconnected' | 'error'
   const [statusMessage, setStatusMessage] = useState('Initializing terminal session...');
@@ -53,12 +54,16 @@ export default function TerminalComponent({ sessionId, title, isActive, onDiscon
     term.open(terminalRef.current);
     fitAddon.fit();
 
+    let ipcSession = null;
+    let ws = null;
+
     // Custom key handler to force capture of Space key and standard copy/paste shortcuts
     term.attachCustomKeyEventHandler((event) => {
       if (event.key === ' ' || event.keyCode === 32) {
         if (event.type === 'keydown') {
-          const ws = socketRef.current;
-          if (ws && ws.readyState === WebSocket.OPEN) {
+          if (ipcSession) {
+            ipcSession.send(JSON.stringify({ type: 'data', data: ' ' }));
+          } else if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: 'data', data: ' ' }));
           }
         }
@@ -98,9 +103,17 @@ export default function TerminalComponent({ sessionId, title, isActive, onDiscon
 
       // Check for Ctrl+V or Cmd+V or Ctrl+Shift+V (Paste)
       if ((event.ctrlKey || event.metaKey) && (event.key === 'v' || event.key === 'V')) {
-        // Prevent xterm.js from sending Ctrl+V character code to the shell.
-        // The main process before-input-event listener handles calling webContents.paste()
-        // which inserts the clipboard content directly into the terminal's focused helper textarea.
+        if (event.type === 'keydown') {
+          navigator.clipboard.readText()
+            .then((text) => {
+              if (ipcSession) {
+                ipcSession.send(JSON.stringify({ type: 'data', data: text }));
+              } else if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'data', data: text }));
+              }
+            })
+            .catch(err => console.error('Failed to read clipboard: ', err));
+        }
         event.preventDefault();
         return false;
       }
@@ -108,63 +121,109 @@ export default function TerminalComponent({ sessionId, title, isActive, onDiscon
       return true;
     });
 
-    // 3. Establish WebSocket connection
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = window.location.host; // Handles Vite dev proxy (5173 -> 5000) or production server (5000)
-    const socketUrl = `${protocol}//${host}/ws?sessionId=${sessionId}`;
-    
-    const ws = new WebSocket(socketUrl);
-    socketRef.current = ws;
+    // 3. Register Focus & Blur Handlers to inform Electron Main Process
+    const disposableFocus = term.onFocus(() => {
+      if (window.electronAPI) {
+        window.electronAPI.setTerminalFocus(true);
+      }
+    });
 
-    // 4. WebSocket Event Handlers
-    ws.onopen = () => {
-      setStatusMessage('Connected to server proxy. Requesting SSH tunnel...');
-    };
+    const disposableBlur = term.onBlur(() => {
+      if (window.electronAPI) {
+        window.electronAPI.setTerminalFocus(false);
+      }
+    });
 
-    ws.onmessage = (event) => {
-      try {
-        const message = JSON.parse(event.data);
-        
-        if (message.type === 'status') {
-          if (message.message === 'ready') {
+    // 4. Establish Session connection
+    if (window.electronAPI) {
+      // IPC Connection Mode (Electron Desktop)
+      ipcSession = window.electronAPI.connectSession(sessionId, {
+        onStatus: (msg) => {
+          if (msg === 'ready') {
             setStatus('ready');
             term.focus();
-            
-            // Send initial resize to fit remote terminal rows/cols to container size
-            ws.send(JSON.stringify({
+            if (window.electronAPI) {
+              window.electronAPI.setTerminalFocus(true);
+            }
+            ipcSession.send(JSON.stringify({
               type: 'resize',
               cols: term.cols,
               rows: term.rows
             }));
           } else {
-            setStatusMessage(message.message);
+            setStatusMessage(msg);
           }
-        } else if (message.type === 'data') {
-          term.write(message.data);
-        } else if (message.type === 'error') {
+        },
+        onData: (data) => {
+          term.write(data);
+        },
+        onError: (err) => {
           setStatus('error');
-          setStatusMessage(message.message);
-          term.write(`\r\n\x1b[31;1mError: ${message.message}\x1b[0m\r\n`);
+          setStatusMessage(err);
+          term.write(`\r\n\x1b[31;1mError: ${err}\x1b[0m\r\n`);
+        },
+        onClose: () => {
+          setStatus(prev => (prev === 'error' ? 'error' : 'disconnected'));
+          term.write('\r\n\r\n\x1b[31;1m=== SSH Connection Closed ===\x1b[0m\r\n');
         }
-      } catch (e) {
-        // Fallback for raw websocket text data
-        term.write(event.data);
-      }
-    };
+      });
+      ipcSessionRef.current = ipcSession;
+    } else {
+      // WebSocket Connection Mode (Web / Dev server fallback)
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const host = window.location.host;
+      const socketUrl = `${protocol}//${host}/ws?sessionId=${sessionId}`;
+      
+      ws = new WebSocket(socketUrl);
+      socketRef.current = ws;
 
-    ws.onerror = () => {
-      setStatus('error');
-      setStatusMessage('WebSocket connection error. Make sure the proxy backend is running.');
-    };
+      ws.onopen = () => {
+        setStatusMessage('Connected to server proxy. Requesting SSH tunnel...');
+      };
 
-    ws.onclose = (event) => {
-      setStatus(prev => (prev === 'error' ? 'error' : 'disconnected'));
-      term.write('\r\n\r\n\x1b[31;1m=== SSH Connection Closed ===\x1b[0m\r\n');
-    };
+      ws.onmessage = (event) => {
+        try {
+          const message = JSON.parse(event.data);
+          if (message.type === 'status') {
+            if (message.message === 'ready') {
+              setStatus('ready');
+              term.focus();
+              ws.send(JSON.stringify({
+                type: 'resize',
+                cols: term.cols,
+                rows: term.rows
+              }));
+            } else {
+              setStatusMessage(message.message);
+            }
+          } else if (message.type === 'data') {
+            term.write(message.data);
+          } else if (message.type === 'error') {
+            setStatus('error');
+            setStatusMessage(message.message);
+            term.write(`\r\n\x1b[31;1mError: ${message.message}\x1b[0m\r\n`);
+          }
+        } catch (e) {
+          term.write(event.data);
+        }
+      };
 
-    // 5. Connect Keyboard Input to Socket
+      ws.onerror = () => {
+        setStatus('error');
+        setStatusMessage('WebSocket connection error. Make sure the proxy backend is running.');
+      };
+
+      ws.onclose = (event) => {
+        setStatus(prev => (prev === 'error' ? 'error' : 'disconnected'));
+        term.write('\r\n\r\n\x1b[31;1m=== SSH Connection Closed ===\x1b[0m\r\n');
+      };
+    }
+
+    // 5. Connect Keyboard Input to Tunnel
     const disposableData = term.onData((data) => {
-      if (ws.readyState === WebSocket.OPEN) {
+      if (ipcSession) {
+        ipcSession.send(JSON.stringify({ type: 'data', data }));
+      } else if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'data', data }));
       }
     });
@@ -173,7 +232,13 @@ export default function TerminalComponent({ sessionId, title, isActive, onDiscon
     const handleResize = () => {
       if (fitAddonRef.current && xtermRef.current) {
         fitAddonRef.current.fit();
-        if (ws.readyState === WebSocket.OPEN) {
+        if (ipcSession) {
+          ipcSession.send(JSON.stringify({
+            type: 'resize',
+            cols: xtermRef.current.cols,
+            rows: xtermRef.current.rows
+          }));
+        } else if (ws && ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({
             type: 'resize',
             cols: xtermRef.current.cols,
@@ -185,7 +250,6 @@ export default function TerminalComponent({ sessionId, title, isActive, onDiscon
 
     // Setup ResizeObserver on container rather than just window resize
     const resizeObserver = new ResizeObserver(() => {
-      // Throttle resize updates slightly to avoid layout flicker
       setTimeout(handleResize, 50);
     });
     
@@ -198,38 +262,55 @@ export default function TerminalComponent({ sessionId, title, isActive, onDiscon
     // 7. Cleanup on Unmount
     return () => {
       disposableData.dispose();
+      disposableFocus.dispose();
+      disposableBlur.dispose();
       window.removeEventListener('resize', handleResize);
       resizeObserver.disconnect();
       
-      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+      if (ipcSession) {
+        ipcSession.close();
+      }
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
         ws.close();
+      }
+      if (window.electronAPI) {
+        window.electronAPI.setTerminalFocus(false);
       }
       
       term.dispose();
     };
   }, [sessionId]);
 
-  // Auto-focus terminal when tab becomes active, blur when deactivated to prevent key event hijacking
+  // Auto-focus terminal when tab becomes active
   useEffect(() => {
     if (xtermRef.current) {
       if (isActive) {
         const timer = setTimeout(() => {
           if (xtermRef.current) {
             xtermRef.current.focus();
+            if (window.electronAPI) {
+              window.electronAPI.setTerminalFocus(true);
+            }
           }
         }, 100);
         return () => clearTimeout(timer);
       } else {
         xtermRef.current.blur();
+        if (window.electronAPI) {
+          window.electronAPI.setTerminalFocus(false);
+        }
       }
     }
   }, [isActive]);
 
-  // Ensure terminal receives focus when state changes to 'ready' (after DOM has completed rendering)
+  // Ensure terminal receives focus when state changes to 'ready'
   useEffect(() => {
     if (status === 'ready' && xtermRef.current) {
       const timer = setTimeout(() => {
         xtermRef.current.focus();
+        if (window.electronAPI) {
+          window.electronAPI.setTerminalFocus(true);
+        }
       }, 80);
       return () => clearTimeout(timer);
     }
@@ -248,40 +329,114 @@ export default function TerminalComponent({ sessionId, title, isActive, onDiscon
   };
 
   return (
-    <div className="terminal-tab-wrapper" onClick={handleTerminalClick}>
-      {status !== 'ready' && (
-        <div className="terminal-status-overlay">
-          {status === 'connecting' && (
-            <>
-              <div className="status-spinner"></div>
-              <div className="status-message">{statusMessage}</div>
-            </>
-          )}
-          {status === 'error' && (
-            <div className="status-error">
-              <h3>Connection Failed</h3>
-              <p>{statusMessage}</p>
-              <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
-                <button className="btn-reconnect" onClick={handleReconnect}>Reconnect</button>
-                <button className="btn-secondary" style={{ padding: '8px 16px', fontSize: '13px' }} onClick={onDisconnect}>Close Tab</button>
-              </div>
-            </div>
-          )}
-          {status === 'disconnected' && (
-            <div className="status-error" style={{ background: 'rgba(255,255,255,0.02)', borderColor: 'rgba(255,255,255,0.08)', color: 'var(--text-secondary)' }}>
-              <h3>Connection Terminated</h3>
-              <p>The SSH terminal session has ended.</p>
-              <button className="btn-secondary" style={{ padding: '8px 16px', fontSize: '13px', marginTop: '10px' }} onClick={onDisconnect}>Close Tab</button>
-            </div>
-          )}
-        </div>
-      )}
+    <div className="terminal-tab-wrapper" onClick={handleTerminalClick} style={{ position: 'relative' }}>
       
+      {/* 1. Terminal Container (Always visible once connected, keeps logs visible on error) */}
       <div 
         className="terminal-container" 
         ref={terminalRef}
-        style={{ display: status === 'ready' ? 'block' : 'none' }}
+        style={{ display: (status === 'ready' || status === 'disconnected' || status === 'error') ? 'block' : 'none', height: '100%' }}
       />
+
+      {/* 2. Loading Overlay (Connecting only) */}
+      {status === 'connecting' && (
+        <div className="terminal-status-overlay">
+          <div className="status-spinner"></div>
+          <div className="status-message">{statusMessage}</div>
+        </div>
+      )}
+
+      {/* 3. Disconnected / Error Popup Dialog (Semi-transparent overlay + popup window) */}
+      {(status === 'disconnected' || status === 'error') && (
+        <div className="terminal-dialog-overlay" style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(10, 11, 14, 0.65)',
+          backdropFilter: 'blur(3px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 100
+        }}>
+          <div className="terminal-dialog-box" style={{
+            width: '400px',
+            background: 'hsla(230, 25%, 12%, 0.95)',
+            border: '1px solid rgba(255, 255, 255, 0.1)',
+            borderRadius: '12px',
+            padding: '24px',
+            boxShadow: '0 20px 40px rgba(0, 0, 0, 0.5)',
+            textAlign: 'center',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '16px'
+          }}>
+            <h3 style={{
+              margin: 0,
+              fontSize: '18px',
+              fontWeight: 600,
+              color: status === 'error' ? 'var(--danger)' : 'var(--text-primary)'
+            }}>
+              {status === 'error' ? 'Connection Error' : 'Connection Terminated'}
+            </h3>
+            
+            <p style={{
+              margin: 0,
+              fontSize: '13px',
+              color: 'var(--text-secondary)',
+              lineHeight: 1.5
+            }}>
+              {status === 'error' 
+                ? (statusMessage || 'A network error or timeout has occurred.')
+                : 'The SSH connection was closed or timed out.'
+              }
+            </p>
+
+            <div style={{
+              display: 'flex',
+              justifyContent: 'center',
+              gap: '12px',
+              marginTop: '8px'
+            }}>
+              <button 
+                className="btn-primary" 
+                style={{
+                  padding: '8px 20px',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  background: status === 'error' ? 'var(--danger)' : 'var(--primary)',
+                  boxShadow: status === 'error' ? '0 4px 12px var(--danger-glow)' : '0 4px 12px var(--primary-glow)',
+                  border: 'none',
+                  borderRadius: '6px',
+                  color: 'white',
+                  cursor: 'pointer'
+                }}
+                onClick={handleReconnect}
+              >
+                Reconnect
+              </button>
+              <button 
+                className="btn-secondary" 
+                style={{
+                  padding: '8px 20px',
+                  fontSize: '13px',
+                  background: 'rgba(255, 255, 255, 0.05)',
+                  border: '1px solid rgba(255, 255, 255, 0.1)',
+                  borderRadius: '6px',
+                  color: 'var(--text-secondary)',
+                  cursor: 'pointer'
+                }}
+                onClick={onDisconnect}
+              >
+                Close Tab
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      
     </div>
   );
 }
