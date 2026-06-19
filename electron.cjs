@@ -1,4 +1,4 @@
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, Menu } = require('electron');
 const { fork } = require('child_process');
 const path = require('path');
 
@@ -84,6 +84,32 @@ function createWindow() {
     }
   }, 1500);
 
+  // Handle right-click context menu for copy/paste actions (works in text inputs and the terminal)
+  mainWindow.webContents.on('context-menu', (e, params) => {
+    const contextMenuTemplate = [];
+    
+    if (params.editFlags.canUndo) contextMenuTemplate.push({ role: 'undo' });
+    if (params.editFlags.canRedo) contextMenuTemplate.push({ role: 'redo' });
+    if (params.editFlags.canUndo || params.editFlags.canRedo) contextMenuTemplate.push({ type: 'separator' });
+    
+    if (params.editFlags.canCut) contextMenuTemplate.push({ role: 'cut' });
+    if (params.selectionText || params.editFlags.canCopy) {
+      contextMenuTemplate.push({ role: 'copy' });
+    }
+    if (params.editFlags.canPaste) {
+      contextMenuTemplate.push({ role: 'paste' });
+    } else if (!params.isEditable) {
+      // Fallback paste capability for terminal panel right-clicks
+      contextMenuTemplate.push({ role: 'paste' });
+    }
+    if (params.editFlags.canSelectAll) contextMenuTemplate.push({ role: 'selectAll' });
+
+    if (contextMenuTemplate.length > 0) {
+      const contextMenu = Menu.buildFromTemplate(contextMenuTemplate);
+      contextMenu.popup({ window: mainWindow });
+    }
+  });
+
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
@@ -91,6 +117,32 @@ function createWindow() {
 
 // Bootstrap App
 app.whenReady().then(() => {
+  // Set application menu to register default keyboard accelerators (Ctrl+C, Ctrl+V, etc.) even when hidden
+  const template = [
+    {
+      label: 'Edit',
+      submenu: [
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'selectAll' }
+      ]
+    },
+    {
+      label: 'View',
+      submenu: [
+        { role: 'reload' },
+        { role: 'forceReload' },
+        { role: 'toggleDevTools' }
+      ]
+    }
+  ];
+  const menu = Menu.buildFromTemplate(template);
+  Menu.setApplicationMenu(menu);
+
   startBackendServer();
   createWindow();
 
