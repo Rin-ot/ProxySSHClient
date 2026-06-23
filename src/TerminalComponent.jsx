@@ -54,15 +54,14 @@ export default function TerminalComponent({ sessionId, title, isActive, onDiscon
     term.open(terminalRef.current);
     fitAddon.fit();
 
-    let ipcSession = null;
     let ws = null;
 
     // Custom key handler to force capture of Space key and standard copy/paste shortcuts
     term.attachCustomKeyEventHandler((event) => {
       if (event.key === ' ' || event.keyCode === 32) {
         if (event.type === 'keydown') {
-          if (ipcSession) {
-            ipcSession.send(JSON.stringify({ type: 'data', data: ' ' }));
+          if (ipcSessionRef.current) {
+            ipcSessionRef.current.send(JSON.stringify({ type: 'data', data: ' ' }));
           } else if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: 'data', data: ' ' }));
           }
@@ -106,8 +105,8 @@ export default function TerminalComponent({ sessionId, title, isActive, onDiscon
         if (event.type === 'keydown') {
           navigator.clipboard.readText()
             .then((text) => {
-              if (ipcSession) {
-                ipcSession.send(JSON.stringify({ type: 'data', data: text }));
+              if (ipcSessionRef.current) {
+                ipcSessionRef.current.send(JSON.stringify({ type: 'data', data: text }));
               } else if (ws && ws.readyState === WebSocket.OPEN) {
                 ws.send(JSON.stringify({ type: 'data', data: text }));
               }
@@ -137,7 +136,7 @@ export default function TerminalComponent({ sessionId, title, isActive, onDiscon
     // 4. Establish Session connection
     if (window.electronAPI) {
       // IPC Connection Mode (Electron Desktop)
-      ipcSession = window.electronAPI.connectSession(sessionId, {
+      ipcSessionRef.current = window.electronAPI.connectSession(sessionId, {
         onStatus: (msg) => {
           if (msg === 'ready') {
             setStatus('ready');
@@ -145,11 +144,13 @@ export default function TerminalComponent({ sessionId, title, isActive, onDiscon
             if (window.electronAPI) {
               window.electronAPI.setTerminalFocus(true);
             }
-            ipcSession.send(JSON.stringify({
-              type: 'resize',
-              cols: term.cols,
-              rows: term.rows
-            }));
+            if (ipcSessionRef.current) {
+              ipcSessionRef.current.send(JSON.stringify({
+                type: 'resize',
+                cols: term.cols,
+                rows: term.rows
+              }));
+            }
           } else {
             setStatusMessage(msg);
           }
@@ -167,7 +168,6 @@ export default function TerminalComponent({ sessionId, title, isActive, onDiscon
           term.write('\r\n\r\n\x1b[31;1m=== SSH Connection Closed ===\x1b[0m\r\n');
         }
       });
-      ipcSessionRef.current = ipcSession;
     } else {
       // WebSocket Connection Mode (Web / Dev server fallback)
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -221,8 +221,8 @@ export default function TerminalComponent({ sessionId, title, isActive, onDiscon
 
     // 5. Connect Keyboard Input to Tunnel
     const disposableData = term.onData((data) => {
-      if (ipcSession) {
-        ipcSession.send(JSON.stringify({ type: 'data', data }));
+      if (ipcSessionRef.current) {
+        ipcSessionRef.current.send(JSON.stringify({ type: 'data', data }));
       } else if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'data', data }));
       }
@@ -232,8 +232,8 @@ export default function TerminalComponent({ sessionId, title, isActive, onDiscon
     const handleResize = () => {
       if (fitAddonRef.current && xtermRef.current) {
         fitAddonRef.current.fit();
-        if (ipcSession) {
-          ipcSession.send(JSON.stringify({
+        if (ipcSessionRef.current) {
+          ipcSessionRef.current.send(JSON.stringify({
             type: 'resize',
             cols: xtermRef.current.cols,
             rows: xtermRef.current.rows
@@ -267,8 +267,8 @@ export default function TerminalComponent({ sessionId, title, isActive, onDiscon
       window.removeEventListener('resize', handleResize);
       resizeObserver.disconnect();
       
-      if (ipcSession) {
-        ipcSession.close();
+      if (ipcSessionRef.current) {
+        ipcSessionRef.current.close();
       }
       if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
         ws.close();

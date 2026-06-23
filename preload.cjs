@@ -3,6 +3,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('electronAPI', {
   createSession: (config) => ipcRenderer.invoke('create-session', config),
   setTerminalFocus: (focused) => ipcRenderer.send('terminal-focus', focused),
+  loadProfiles: () => ipcRenderer.invoke('load-profiles'),
+  saveProfiles: (profiles) => ipcRenderer.invoke('save-profiles', profiles),
   connectSession: (sessionId, callbacks) => {
     const channel = `session-message-${sessionId}`;
     
@@ -19,7 +21,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     };
     
     ipcRenderer.on(channel, messageListener);
-    ipcRenderer.send('session-connect', sessionId);
+    
+    // Defer triggering the session connection to ensure connectSession returns first in the renderer
+    setTimeout(() => {
+      ipcRenderer.send('session-connect', sessionId);
+    }, 0);
     
     return {
       send: (msg) => ipcRenderer.send('session-send', sessionId, msg),

@@ -221,22 +221,44 @@ export default function App() {
     setActiveTerminals(updated);
   };
 
-  // Load profiles from LocalStorage on mount
+  // Load profiles on mount (supporting both Electron IPC storage and fallback LocalStorage)
   useEffect(() => {
-    const saved = localStorage.getItem('proxy_ssh_profiles');
-    if (saved) {
-      try {
-        setProfiles(JSON.parse(saved));
-      } catch (e) {
-        console.error('Failed to parse saved profiles.', e);
+    const loadProfilesData = async () => {
+      if (window.electronAPI) {
+        try {
+          const loaded = await window.electronAPI.loadProfiles();
+          if (loaded) {
+            setProfiles(loaded);
+          }
+        } catch (err) {
+          console.error('Failed to load profiles via Electron IPC:', err);
+        }
+      } else {
+        const saved = localStorage.getItem('proxy_ssh_profiles');
+        if (saved) {
+          try {
+            setProfiles(JSON.parse(saved));
+          } catch (e) {
+            console.error('Failed to parse saved profiles.', e);
+          }
+        }
       }
-    }
+    };
+    loadProfilesData();
   }, []);
 
-  // Sync profiles to localStorage
-  const saveProfilesToStorage = (updated) => {
+  // Sync profiles (supporting both Electron IPC storage and fallback LocalStorage)
+  const saveProfilesToStorage = async (updated) => {
     setProfiles(updated);
-    localStorage.setItem('proxy_ssh_profiles', JSON.stringify(updated));
+    if (window.electronAPI) {
+      try {
+        await window.electronAPI.saveProfiles(updated);
+      } catch (err) {
+        console.error('Failed to save profiles via Electron IPC:', err);
+      }
+    } else {
+      localStorage.setItem('proxy_ssh_profiles', JSON.stringify(updated));
+    }
   };
 
   const startNewProfile = () => {

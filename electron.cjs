@@ -1,5 +1,6 @@
 const { app, BrowserWindow, Menu, ipcMain } = require('electron');
 const path = require('path');
+const fs = require('fs');
 const { Client: SSHClient } = require('ssh2');
 const { SocksClient } = require('socks');
 const net = require('net');
@@ -10,6 +11,19 @@ let mainWindow;
 const sessions = new Map();
 const activeSshConnections = new Map(); // sessionId -> { conn, stream }
 let isTerminalFocused = false;
+
+const PROFILES_PATH = path.join(app.getPath('userData'), 'profiles.json');
+
+// Safe IPC sender helper to prevent main process crashes if the renderer window is closed or reloaded mid-connection
+function safeSend(sender, channel, message) {
+  if (sender && !sender.isDestroyed()) {
+    try {
+      sender.send(channel, message);
+    } catch (e) {
+      console.warn('[IPC Warning] Failed to send message:', e.message);
+    }
+  }
+}
 
 // HTTP proxy connection function (via HTTP CONNECT)
 function connectHttpProxy(proxyOpts, sshOpts) {
@@ -123,6 +137,28 @@ ipcMain.handle('create-session', async (event, config) => {
   return { sessionId };
 });
 
+ipcMain.handle('load-profiles', async () => {
+  try {
+    if (fs.existsSync(PROFILES_PATH)) {
+      const data = fs.readFileSync(PROFILES_PATH, 'utf8');
+      return JSON.parse(data);
+    }
+  } catch (err) {
+    console.error('[Profiles] Failed to load profiles from file:', err);
+  }
+  return [];
+});
+
+ipcMain.handle('save-profiles', async (event, profiles) => {
+  try {
+    fs.writeFileSync(PROFILES_PATH, JSON.stringify(profiles, null, 2), 'utf8');
+    return true;
+  } catch (err) {
+    console.error('[Profiles] Failed to save profiles to file:', err);
+    throw err;
+  }
+});
+
 ipcMain.on('terminal-focus', (event, focused) => {
   isTerminalFocused = focused;
 });
@@ -131,15 +167,15 @@ ipcMain.on('session-connect', async (event, sessionId) => {
   const sender = event.sender;
 
   if (!sessionId || !sessions.has(sessionId)) {
-    sender.send(`session-message-${sessionId}`, { type: 'error', message: 'Connection rejected: Invalid or expired session ID.' });
-    sender.send(`session-message-${sessionId}`, { type: 'close' });
+    safeSend(sender, `session-message-${sessionId}`, { type: 'error', message: 'Connection rejected: Invalid or expired session ID.' });
+    safeSend(sender, `session-message-${sessionId}`, { type: 'close' });
     return;
   }
 
   const session = sessions.get(sessionId);
   if (session.connected) {
-    sender.send(`session-message-${sessionId}`, { type: 'error', message: 'Connection rejected: Session is already in use.' });
-    sender.send(`session-message-${sessionId}`, { type: 'close' });
+    safeSend(sender, `session-message-${sessionId}`, { type: 'error', message: 'Connection rejected: Session is already in use.' });
+    safeSend(sender, `session-message-${sessionId}`, { type: 'close' });
     return;
   }
 
@@ -162,7 +198,7 @@ ipcMain.on('session-connect', async (event, sessionId) => {
 
   // Establish proxy connection if required
   if (proxy && proxy.type && proxy.type !== 'none' && proxy.host && proxy.port) {
-    sender.send(`session-message-${sessionId}`, { type: 'status', message: `Connecting to ${proxy.type.toUpperCase()} proxy at ${proxy.host}:${proxy.port}...` });
+    safeSend(sender, `session-message-${sessionId}`, { type: 'status', message: `Connecting to ${proxy.type.toUpperCase()} proxy at ${proxy.host}:${proxy.port}...` });
     try {
       const sshWithResolvedHost = { ...ssh, host: resolvedSshHost };
       if (proxy.type === 'http') {
@@ -172,52 +208,52 @@ ipcMain.on('session-connect', async (event, sessionId) => {
       } else {
         throw new Error(`Unsupported proxy protocol: ${proxy.type}`);
       }
-      sender.send(`session-message-${sessionId}`, { type: 'status', message: 'Proxy tunnel established. Authenticating with SSH host...' });
+      safeSend(sender, `session-message-${sessionId}`, { type: 'status', message: 'Proxy tunnel established. Authenticating with SSH host...' });
     } catch (err) {
-      sender.send(`session-message-${sessionId}`, { type: 'error', message: `Proxy Tunnel Failed: ${err.message}` });
-      sender.send(`session-message-${sessionId}`, { type: 'close' });
+      safeSend(sender, `session-message-${sessionId}`, { type: 'error', message: `Proxy Tunnel Failed: ${err.message}` });
+      safeSend(sender, `session-message-${sessionId}`, { type: 'close' });
       return;
     }
   } else {
-    sender.send(`session-message-${sessionId}`, { type: 'status', message: `Connecting directly to SSH host ${resolvedSshHost}:${ssh.port || 22}...` });
+    safeSend(sender, `session-message-${sessionId}`, { type: 'status', message: `Connecting directly to SSH host ${resolvedSshHost}:${ssh.port || 22}...` });
   }
 
   const conn = new SSHClient();
 
   conn.on('ready', () => {
-    sender.send(`session-message-${sessionId}`, { type: 'status', message: 'SSH authenticated. Creating interactive shell...' });
+    safeSend(sender, `session-message-${sessionId}`, { type: 'status', message: 'SSH authenticated. Creating interactive shell...' });
 
     conn.shell({ term: 'xterm-256color', cols: 80, rows: 24 }, (err, stream) => {
       if (err) {
-        sender.send(`session-message-${sessionId}`, { type: 'error', message: `Failed to open SSH shell: ${err.message}` });
+        safeSend(sender, `session-message-${sessionId}`, { type: 'error', message: `Failed to open SSH shell: ${err.message}` });
         conn.end();
         return;
       }
 
       activeSshConnections.set(sessionId, { conn, stream });
 
-      sender.send(`session-message-${sessionId}`, { type: 'status', message: 'ready' });
+      safeSend(sender, `session-message-${sessionId}`, { type: 'status', message: 'ready' });
 
       stream.on('data', (data) => {
-        sender.send(`session-message-${sessionId}`, { type: 'data', data: data.toString('utf-8') });
+        safeSend(sender, `session-message-${sessionId}`, { type: 'data', data: data.toString('utf-8') });
       });
 
       stream.on('close', () => {
-        sender.send(`session-message-${sessionId}`, { type: 'status', message: 'SSH session closed by remote host.' });
-        sender.send(`session-message-${sessionId}`, { type: 'close' });
+        safeSend(sender, `session-message-${sessionId}`, { type: 'status', message: 'SSH session closed by remote host.' });
+        safeSend(sender, `session-message-${sessionId}`, { type: 'close' });
         activeSshConnections.delete(sessionId);
       });
     });
   });
 
   conn.on('error', (err) => {
-    sender.send(`session-message-${sessionId}`, { type: 'error', message: `SSH Connection Error: ${err.message}` });
-    sender.send(`session-message-${sessionId}`, { type: 'close' });
+    safeSend(sender, `session-message-${sessionId}`, { type: 'error', message: `SSH Connection Error: ${err.message}` });
+    safeSend(sender, `session-message-${sessionId}`, { type: 'close' });
     activeSshConnections.delete(sessionId);
   });
 
   conn.on('close', () => {
-    sender.send(`session-message-${sessionId}`, { type: 'close' });
+    safeSend(sender, `session-message-${sessionId}`, { type: 'close' });
     activeSshConnections.delete(sessionId);
   });
 
@@ -245,8 +281,8 @@ ipcMain.on('session-connect', async (event, sessionId) => {
   try {
     conn.connect(sshConfig);
   } catch (err) {
-    sender.send(`session-message-${sessionId}`, { type: 'error', message: `SSH Connect Call Failed: ${err.message}` });
-    sender.send(`session-message-${sessionId}`, { type: 'close' });
+    safeSend(sender, `session-message-${sessionId}`, { type: 'error', message: `SSH Connect Call Failed: ${err.message}` });
+    safeSend(sender, `session-message-${sessionId}`, { type: 'close' });
   }
 });
 
@@ -258,10 +294,18 @@ ipcMain.on('session-send', (event, sessionId, msg) => {
       if (parsed.type === 'data') {
         connection.stream.write(parsed.data);
       } else if (parsed.type === 'resize') {
-        connection.stream.setWindow(parsed.rows, parsed.cols, 0, 0);
+        try {
+          connection.stream.setWindow(parsed.rows, parsed.cols, 0, 0);
+        } catch (resizeErr) {
+          console.warn('[SSH] setWindow failed:', resizeErr.message);
+        }
       }
     } catch (e) {
-      connection.stream.write(msg);
+      try {
+        connection.stream.write(msg);
+      } catch (writeErr) {
+        console.warn('[SSH] Stream write failed:', writeErr.message);
+      }
     }
   }
 });
@@ -269,8 +313,12 @@ ipcMain.on('session-send', (event, sessionId, msg) => {
 ipcMain.on('session-close', (event, sessionId) => {
   const connection = activeSshConnections.get(sessionId);
   if (connection) {
-    if (connection.stream) connection.stream.end();
-    if (connection.conn) connection.conn.end();
+    if (connection.stream) {
+      try { connection.stream.end(); } catch (e) {}
+    }
+    if (connection.conn) {
+      try { connection.conn.end(); } catch (e) {}
+    }
     activeSshConnections.delete(sessionId);
   }
 });
@@ -285,6 +333,37 @@ function closeAllSshConnections() {
     }
   }
   activeSshConnections.clear();
+}
+
+// Transparent migration of old profiles from http://localhost:5000 localStorage (runs only once if profiles.json is missing)
+async function migrateOldProfiles() {
+  if (fs.existsSync(PROFILES_PATH)) {
+    return; // Already migrated or profiles exist
+  }
+
+  console.log('[Migration] Checking for old profiles from http://localhost:5000...');
+  try {
+    const tempWindow = new BrowserWindow({
+      show: false,
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true
+      }
+    });
+
+    await tempWindow.loadURL('http://localhost:5000');
+    const data = await tempWindow.webContents.executeJavaScript("localStorage.getItem('proxy_ssh_profiles')");
+    if (data) {
+      const parsed = JSON.parse(data);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        fs.writeFileSync(PROFILES_PATH, JSON.stringify(parsed, null, 2), 'utf8');
+        console.log(`[Migration] Successfully migrated ${parsed.length} profiles to profiles.json!`);
+      }
+    }
+    tempWindow.destroy();
+  } catch (err) {
+    console.warn('[Migration Warning] Failed to migrate profiles:', err.message);
+  }
 }
 
 function createWindow() {
@@ -372,8 +451,10 @@ function createWindow() {
 
   // Load local static entry point directly
   mainWindow.loadFile(path.join(__dirname, 'dist', 'index.html'))
-    .then(() => {
+    .then(async () => {
       mainWindow.show();
+      // Run profiles migration asynchronously on startup
+      await migrateOldProfiles();
     })
     .catch((err) => {
       console.error('[Electron Main] Failed to load index.html:', err);
