@@ -20,6 +20,7 @@ export default function TerminalComponent({ sessionId, title, isActive, onDiscon
       cursorStyle: 'block',
       fontSize: 14,
       fontFamily: 'Fira Code, Courier New, monospace',
+      scrollback: 5000,
       theme: {
         background: '#0f1015',
         foreground: '#a9b1d6',
@@ -52,7 +53,18 @@ export default function TerminalComponent({ sessionId, title, isActive, onDiscon
 
     // Render terminal in container
     term.open(terminalRef.current);
-    fitAddon.fit();
+    
+    // Fit terminal if parent container is visible and has size
+    if (terminalRef.current) {
+      const parent = terminalRef.current.parentElement;
+      if (parent && parent.clientWidth > 0 && parent.clientHeight > 0) {
+        try {
+          fitAddon.fit();
+        } catch (fitErr) {
+          console.warn('[Terminal] Initial fit failed:', fitErr.message);
+        }
+      }
+    }
 
     let ws = null;
 
@@ -121,17 +133,22 @@ export default function TerminalComponent({ sessionId, title, isActive, onDiscon
     });
 
     // 3. Register Focus & Blur Handlers to inform Electron Main Process
-    const disposableFocus = term.onFocus(() => {
+    const handleTextAreaFocus = () => {
       if (window.electronAPI) {
         window.electronAPI.setTerminalFocus(true);
       }
-    });
+    };
 
-    const disposableBlur = term.onBlur(() => {
+    const handleTextAreaBlur = () => {
       if (window.electronAPI) {
         window.electronAPI.setTerminalFocus(false);
       }
-    });
+    };
+
+    if (term.textarea) {
+      term.textarea.addEventListener('focus', handleTextAreaFocus);
+      term.textarea.addEventListener('blur', handleTextAreaBlur);
+    }
 
     // 4. Establish Session connection
     if (window.electronAPI) {
@@ -144,7 +161,7 @@ export default function TerminalComponent({ sessionId, title, isActive, onDiscon
             if (window.electronAPI) {
               window.electronAPI.setTerminalFocus(true);
             }
-            if (ipcSessionRef.current) {
+            if (ipcSessionRef.current && term.cols > 0 && term.rows > 0) {
               ipcSessionRef.current.send(JSON.stringify({
                 type: 'resize',
                 cols: term.cols,
@@ -230,20 +247,31 @@ export default function TerminalComponent({ sessionId, title, isActive, onDiscon
 
     // 6. Monitor terminal window resize
     const handleResize = () => {
-      if (fitAddonRef.current && xtermRef.current) {
-        fitAddonRef.current.fit();
-        if (ipcSessionRef.current) {
-          ipcSessionRef.current.send(JSON.stringify({
-            type: 'resize',
-            cols: xtermRef.current.cols,
-            rows: xtermRef.current.rows
-          }));
-        } else if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({
-            type: 'resize',
-            cols: xtermRef.current.cols,
-            rows: xtermRef.current.rows
-          }));
+      if (fitAddonRef.current && xtermRef.current && terminalRef.current) {
+        const parent = terminalRef.current.parentElement;
+        if (parent && parent.clientWidth > 0 && parent.clientHeight > 0) {
+          try {
+            fitAddonRef.current.fit();
+            const cols = xtermRef.current.cols;
+            const rows = xtermRef.current.rows;
+            if (cols > 0 && rows > 0) {
+              if (ipcSessionRef.current) {
+                ipcSessionRef.current.send(JSON.stringify({
+                  type: 'resize',
+                  cols,
+                  rows
+                }));
+              } else if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                  type: 'resize',
+                  cols,
+                  rows
+                }));
+              }
+            }
+          } catch (fitErr) {
+            console.warn('[Terminal] fit during resize failed:', fitErr.message);
+          }
         }
       }
     };
@@ -262,8 +290,10 @@ export default function TerminalComponent({ sessionId, title, isActive, onDiscon
     // 7. Cleanup on Unmount
     return () => {
       disposableData.dispose();
-      disposableFocus.dispose();
-      disposableBlur.dispose();
+      if (term.textarea) {
+        term.textarea.removeEventListener('focus', handleTextAreaFocus);
+        term.textarea.removeEventListener('blur', handleTextAreaBlur);
+      }
       window.removeEventListener('resize', handleResize);
       resizeObserver.disconnect();
       
@@ -331,12 +361,13 @@ export default function TerminalComponent({ sessionId, title, isActive, onDiscon
   return (
     <div className="terminal-tab-wrapper" onClick={handleTerminalClick} style={{ position: 'relative' }}>
       
-      {/* 1. Terminal Container (Always visible once connected, keeps logs visible on error) */}
-      <div 
-        className="terminal-container" 
-        ref={terminalRef}
-        style={{ display: (status === 'ready' || status === 'disconnected' || status === 'error') ? 'block' : 'none', height: '100%' }}
-      />
+      {/* 1. Terminal Container (Always visible in layout, covered by absolute status overlay if connecting) */}
+      <div className="terminal-container" style={{ display: 'block', height: '100%' }}>
+        <div 
+          ref={terminalRef}
+          style={{ width: '100%', height: '100%' }}
+        />
+      </div>
 
       {/* 2. Loading Overlay (Connecting only) */}
       {status === 'connecting' && (
